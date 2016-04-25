@@ -120,6 +120,7 @@ BROKER_URL = 'django://'
 # setup for rest framework
 REST_FRAMEWORK = {
     'PAGE_SIZE': 10,
+    'PAGINATE_BY_PARAM': 'page_size',     # Allow client to override, using `?page_size=xxx`.
 }
 
 LOGIN_REDIRECT_URL = '/'

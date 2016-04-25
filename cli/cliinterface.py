@@ -10,6 +10,7 @@ import requests
 
 
 class CliInterface:
+
     def __init__(self):
         self.application_id = None
         self.api_url = 'http://127.0.0.1:8000'
@@ -25,9 +26,7 @@ class CliInterface:
                        'Add Document Folder',
                        'Create DocSet',
                        'Create Model',
-                       'Benchmark Model',
-                       'Classify Document',
-                       'Reset Interface']
+                       'Classify Document']
 
             user_selection = get_selection('\nTo get started select a option:', options)[0]
 
@@ -45,18 +44,10 @@ class CliInterface:
             elif user_selection == 6:
                 self.create_model()
             elif user_selection == 7:
-                self.benchmark_model()
-            elif user_selection == 8:
                 self.classify_document()
-            elif user_selection == 9:
-                self.reset_interface()
             else:
                 print('\nRunning', user_selection, '\n')
 
-
-    ##########################################
-    # Async Methods
-    ##########################################
     def create_application(self):
         print('\nCreate Application')
         application_name = input('Please enter the application name: ')
@@ -73,7 +64,7 @@ class CliInterface:
 
     def select_application(self):
         print('\nSelect Application')
-        result = self.get('application')
+        result = self.get('application', optional='page_size=100')
 
         if 'results' in result:
             names = [i['name'] for i in result['results']]
@@ -178,10 +169,6 @@ class CliInterface:
                     sleep(1)
         print('%s Documents Added!' % counter)
 
-
-
-
-
     def create_docset(self):
         print('\nAsync Create DocSet')
         docset_name = input('Please enter a docset name: ')
@@ -190,7 +177,7 @@ class CliInterface:
 
         data = {'application_id': self.application_id, 'name': docset_name,
                 'train_percentage': train_percentage, 'test_percentage': test_percentage}
-        self.synchronous('create-docset', data)
+        self.synchronous('docset', data)
 
     def create_model(self):
         print('\nCreate Model')
@@ -219,10 +206,9 @@ class CliInterface:
         vec_ngram_range_max = get_number('Max ngram size?', 3, 1, 50)
 
         # Choose a document set
-        # docset_id = self.choose_docset_id()
-        docset_id = 1
+        docset_id = self.choose_docset_id()
 
-        data = {'application': self.application_name,
+        data = {'application_id': self.application_id,
                 'name': model_name,
                 'random_forest_classifier': random_forest_classifier,
                 'forest_tree_count': forest_tree_count,
@@ -240,100 +226,71 @@ class CliInterface:
                 'vec_ngram_range_max': vec_ngram_range_max,
                 'vec_strip_accents': vec_strip_accents,
                 'docset_id': docset_id}
-        self.synchronous('create-docset', data)
+        self.synchronous('classifier', data)
 
     def classify_document(self):
-        print('\nAsync Classify Document')
-        filename = input('Please enter the location of the document: ')
+        print('\nClassify Document')
+        document_path = input('Please enter the location of the document: ')
+        ocr_result = self.open_json(document_path)
+        filename = os.path.basename(document_path)
+
+        data = {'application_id': self.application_id,
+                'filename': filename,
+                'ocr_result': json.dumps(ocr_result)}
 
         # Get ocr result
-        ocr_result = self.open_json(filename)
+        result = self.synchronous('classify', data)
 
-        # post document
-        uuid = dc.post_classify_document(self.application_id, ocr_result=ocr_result, path=filename)
-
-        polling = True
-        while polling:
-            sleep(1)
-
-            result = dc.get_classified_document(uuid)
-
-            if result is not None:
-                print('DocType: %s' % result[0])
-                print('Confidence: %s' % result[1])
-                print()
-
-                polling = False
-            else:
-                print('waiting...')
-
-    def get_docset(self):
-        print('\nAsync Get DocSet')
-        print(dc.get_document_sets(self.application_id))
+        if "result" in result:
+            classify = self.get(url=result['classify'])
+            print('DocType: %s' % classify['classification'])
+            print('Confidence: %s' % classify['confidence'])
+            print()
+        else:
+            print('Error')
+            print(result)
 
     def choose_docset_id(self):
-        document_sets = dc.get_document_sets(self.application_id)
+        print('\nSelect Application')
+        optional = ['application=' + str(self.application_id),
+                    'page_size=100']
+        result = self.get('docset', optional=optional)
 
-        if len(document_sets) > 0:
-            available_docsets = dc.get_document_sets(self.application_id)
+        if 'results' in result:
+            names = [i['name'] for i in result['results']]
+            options = [[i['id'], i['name']] for i in result['results']]
+            selection = get_selection('Select an available docset', names)[0]
 
-            options_list = []
-            for docset in available_docsets:
-                options_list.append(
-                    '{} ({}/{})'.format(docset['name'], docset['train_percent'], docset['test_percent']))
-
-            # Loop over all available applications
-            user_selection = get_selection('Select an available DocSet', options_list)[0]
-
-            return available_docsets[user_selection - 1]['id']
-
-    ##########################################
-    # Methods still to convert
-    ##########################################
-    def benchmark_model(self):
-        print('\nBenchmark Model')
-
-        # Predict
-        self.active_classifier_object.predict(self.active_model_object.docset)
-        self.active_classifier_object.print_summary()
-        # run benchmark on active model and print result
-
-    ##########################################
-    # Methods that won't be replaced
-    ##########################################
+            return options[selection-1][0]
 
     def open_json(self, filename):
         return json.loads(open(filename, "rb").read().decode(encoding='UTF-8'))
-
-
-    def reset_interface(self):
-        self.active_classifier_object = None
-        self.active_model_object = None
-        self.active_model_name = None
-        self.active_application_object = None
-        self.active_application_object = None
-        self.active_docset_object = None
-        self.active_docset_name = None
 
     def post(self, type, data):
         response = requests.post(self.api_url + '/' + type + '/', data)
         response = response.json()
         return response
 
-    def get(self, type=None, url=None):
+    def get(self, type=None, url=None, optional=None):
         if url is None:
-            response = requests.get(self.api_url + '/' + type + '/').json()
+            get_url = self.api_url + '/' + type + '/'
         elif type is None:
-            response = requests.get(url).json()
+            get_url = url
         else:
             raise Exception('Get requires type or url to be passed.')
-        return response
+
+        if optional is not None:
+            if isinstance(optional, str):
+                optional = [optional]
+            get_url += '?' + '&'.join(optional)
+
+        return requests.get(get_url).json()
 
     def synchronous(self, type, data):
-        result = self.post('document', data)
+        result = self.post(type, data)
 
         if 'url' in result and 'task' in result:
-            print('Document Posted')
+            print('Request Posted')
         else:
             print('Error')
             print(result)
@@ -347,7 +304,3 @@ class CliInterface:
                 return result
 
             sleep(1)
-
-
-if __name__ == "__main__":
-    CliInterface()
