@@ -30,8 +30,6 @@ class Worker:
 
             sleep(1)
 
-
-
     def complete_work(self):
         for task in self.tasks:
             if task.type == 'createdocument':
@@ -47,7 +45,8 @@ class Worker:
 
             self.mark_task_complete(task, result)
 
-
+        if len(self.tasks) > 0:
+            print('Completed all work')
 
     def get_work(self):
         # If the application is set get any work for them
@@ -60,6 +59,9 @@ class Worker:
                                                                 in_progress=True,
                                                                 worker_uuid=self.uuid)
 
+            if count > 0:
+                print('Got work for current application')
+
         # If we didn't find anything do work anyone can do
         if count == 0:
             nested_q = Task.objects \
@@ -69,6 +71,9 @@ class Worker:
             count = Task.objects.filter(pk__in=nested_q).update(ready=False,
                                                                 in_progress=True,
                                                                 worker_uuid=self.uuid)
+
+            if count > 0:
+                print('Got work for any worker')
 
         # do work that we have to change classifiers for
         if count == 0:
@@ -84,21 +89,26 @@ class Worker:
                                                ready=True,
                                                in_progress=False,
                                                created__lt=timezone.now() - timedelta(seconds=10))[:10]
-                Task.objects.filter(pk__in=nested_q).update(ready=False,
+                count = Task.objects.filter(pk__in=nested_q).update(ready=False,
                                                             in_progress=True,
                                                             worker_uuid=self.uuid)
+
+                if count > 0:
+                    print('Doing work for another application')
 
         # get the tasks that the worker got
         self.tasks = Task.objects.filter(worker_uuid=self.uuid,
                                     in_progress=True)
 
-
     def add_document(self, task):
         task.document.create_values(dictionary=self.dictionary)
         task.document.save()
+        print('Added document %s' % task.document.filename)
         return 'Document created'
 
     def create_document_set(self, task):
+        print('Creating Docset %s' % task.docset.name)
+
         # Get a list of all the documents
         doc_types = set(Document.objects.values_list('doc_type', flat=True)\
                                     .filter(application=task.application))
@@ -132,9 +142,8 @@ class Worker:
                     task.docset.train_documents.add(document_dictionary[doc_type][document_index])
 
         task.docset.save()
+        print('Created Docset %s' % task.docset.name)
         return 'DocSet Created'
-
-    ## Requires Model
 
     def classify_document(self, task):
         if not self.check_application(task):
@@ -153,17 +162,21 @@ class Worker:
         task.classify.classification = result['doc_type']
         task.classify.save()
 
+        print('Classified document %s' % task.classify.filename)
         return 'Document Classified'
 
     def create_classifier(self, task):
         # Create Classifier
+        print('Starting to create classifier')
         self.application = task.application
         self.classifier = Classifier(task.classifier)
         self.classifier.train_classifier()
 
         # Cache model
+        print('Classifier created - caching classifier')
         Cache.store(task.classifier, self.classifier)
 
+        print('Classifier cached')
         return 'Classifier Created'
 
     def mark_task_complete(self, task, result):
